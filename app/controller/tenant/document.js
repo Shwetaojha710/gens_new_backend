@@ -8,11 +8,11 @@ const documentType = require("../../models/documentType");
 exports.addDocument = async (req, res) => {
   const { type, employeeId, status } = req.body;
   const tenantId = req.users?.tenantId;
-const branchId = req.users && req.users.branchId;
+  const branchId = req.users && req.users.branchId;
 
-    if (!branchId || branchId=='null') {
-      return Helper.response(false, "branchId is required!", {}, res, 200);
-    }
+  if (!branchId || branchId == "null") {
+    return Helper.response(false, "branchId is required!", {}, res, 200);
+  }
   try {
     if (!tenantId || !employeeId) {
       Helper.deleteUploadedFiles(req.files);
@@ -21,12 +21,13 @@ const branchId = req.users && req.users.branchId;
         "Tenant ID and Employee ID are required",
         null,
         res,
-        400
+        400,
       );
     }
 
-
-    const typeD = await documentType.findOne({ where: { id: type, tenantId ,branchId} });
+    const typeD = await documentType.findOne({
+      where: { id: type, tenantId, branchId },
+    });
 
     const employeeExists = await empPersonal.findOne({
       where: { id: employeeId, tenantId, branchId },
@@ -38,6 +39,20 @@ const branchId = req.users && req.users.branchId;
 
     if (!req.files || Object.keys(req.files).length === 0) {
       return Helper.response(false, "No files uploaded", null, res, 400);
+    }
+
+    const existingDoc = await Document.findOne({
+      where: { employeeId, tenantId, branchId, type },
+    });
+    if (existingDoc) {
+      Helper.deleteUploadedFiles(req.files);
+      return Helper.response(
+        false,
+        "Document of this type already exists for the employee",
+        null,
+        res,
+        409,
+      );
     }
 
     const createdDocs = [];
@@ -62,7 +77,7 @@ const branchId = req.users && req.users.branchId;
       "Documents added successfully",
       createdDocs,
       res,
-      200
+      200,
     );
   } catch (error) {
     console.error("Error adding document:", error);
@@ -76,9 +91,9 @@ exports.getDocument = async (req, res) => {
   const tenantId = req.users?.tenantId;
   const branchId = req.users && req.users.branchId;
 
-    if (!branchId || branchId=='null') {
-      return Helper.response(false, "branchId is required!", {}, res, 200);
-    }
+  if (!branchId || branchId == "null") {
+    return Helper.response(false, "branchId is required!", {}, res, 200);
+  }
   try {
     if (!tenantId || !employeeId) {
       return Helper.response(
@@ -86,7 +101,7 @@ exports.getDocument = async (req, res) => {
         "Tenant ID and Employee ID are required",
         null,
         res,
-        400
+        400,
       );
     }
 
@@ -114,14 +129,14 @@ exports.getDocument = async (req, res) => {
           createdAt: Helper.formatToIST(doc.createdAt),
           updatedAt: Helper.formatToIST(doc.updatedAt),
         };
-      })
+      }),
     );
     return Helper.response(
       true,
       "Documents retrieved successfully",
       data,
       res,
-      200
+      200,
     );
   } catch (error) {
     console.error("Error retrieving documents:", error);
@@ -130,13 +145,13 @@ exports.getDocument = async (req, res) => {
 };
 
 exports.updateDocument = async (req, res) => {
-  const { employeeId, status, type, doc_name,typeName } = req.body;
+  const { employeeId, status, type, doc_name, typeName } = req.body;
   const tenantId = req.users?.tenantId;
 
   try {
     const branchId = req.users && req.users.branchId;
 
-    if (!branchId || branchId=='null') {
+    if (!branchId || branchId == "null") {
       return Helper.response(false, "branchId is required!", {}, res, 200);
     }
     if (!tenantId || !employeeId) {
@@ -146,20 +161,12 @@ exports.updateDocument = async (req, res) => {
         "Tenant ID and Employee ID are required",
         null,
         res,
-        400
+        400,
       );
     }
-    if(!type  || type=='null'){
-       
-      return Helper.response(
-        false,
-        "All Fields Are required",
-        null,
-        res,
-        400
-      );
+    if (!type || type == "null") {
+      return Helper.response(false, "All Fields Are required", null, res, 400);
     }
-
 
     const employeeExists = await empPersonal.findOne({
       where: { id: employeeId, tenantId, branchId },
@@ -169,7 +176,6 @@ exports.updateDocument = async (req, res) => {
       return Helper.response(false, "Employee not found", null, res, 404);
     }
 
-   
     if (!req.files || Object.keys(req.files).length === 0) {
       const existingDocs = await Document.findAll({
         where: { tenantId, employeeId, branchId },
@@ -181,7 +187,7 @@ exports.updateDocument = async (req, res) => {
           "No documents found to update",
           null,
           res,
-          404
+          404,
         );
       }
 
@@ -198,10 +204,9 @@ exports.updateDocument = async (req, res) => {
         "Document status updated successfully",
         updatedDocuments,
         res,
-        200
+        200,
       );
     }
-
 
     const updatedDocuments = [];
 
@@ -212,7 +217,11 @@ exports.updateDocument = async (req, res) => {
 
       if (existingDoc) {
         // Delete old file if exists
-        const oldFilePath = path.join(__dirname, "../../../upload", existingDoc.doc_name);
+        const oldFilePath = path.join(
+          __dirname,
+          "../../../upload",
+          existingDoc.doc_name,
+        );
         if (fs.existsSync(oldFilePath)) {
           fs.unlinkSync(oldFilePath);
         }
@@ -248,12 +257,18 @@ exports.updateDocument = async (req, res) => {
       "Documents updated successfully",
       updatedDocuments,
       res,
-      200
+      200,
     );
   } catch (error) {
     console.error("Error updating documents:", error);
     Helper.deleteUploadedFiles(req.files);
-    return Helper.response(false, error?.message || "Internal server error", null, res, 500);
+    return Helper.response(
+      false,
+      error?.message || "Internal server error",
+      null,
+      res,
+      500,
+    );
   }
 };
 exports.deleteDocument = async (req, res) => {
@@ -261,9 +276,9 @@ exports.deleteDocument = async (req, res) => {
   const tenantId = req.users?.tenantId;
   const branchId = req.users && req.users.branchId;
 
-    if (!branchId || branchId=='null') {
-      return Helper.response(false, "branchId is required!", {}, res, 200);
-    }
+  if (!branchId || branchId == "null") {
+    return Helper.response(false, "branchId is required!", {}, res, 200);
+  }
   try {
     if (!tenantId || !employeeId || !id) {
       return Helper.response(
@@ -271,7 +286,7 @@ exports.deleteDocument = async (req, res) => {
         "Tenant ID, Employee ID are required",
         null,
         res,
-        400
+        400,
       );
     }
 
@@ -299,7 +314,7 @@ exports.deleteDocument = async (req, res) => {
       "Document deleted successfully",
       null,
       res,
-      200
+      200,
     );
   } catch (error) {
     console.error("Error deleting document:", error);
@@ -307,30 +322,24 @@ exports.deleteDocument = async (req, res) => {
   }
 };
 
-
 exports.addAppDocument = async (req, res) => {
-  const { type,  status } = req.body;
+  const { type, status } = req.body;
   const employeeId = req.users && req.users.id;
   const tenantId = req.users?.tenantId;
-const branchId = req.users && req.users.branchId;
+  const branchId = req.users && req.users.branchId;
 
-    if (!branchId || branchId=='null') {
-      return Helper.response(false, "branchId is required!", {}, res, 200);
-    }
+  if (!branchId || branchId == "null") {
+    return Helper.response(false, "branchId is required!", {}, res, 200);
+  }
   try {
     if (!tenantId || !employeeId) {
       Helper.deleteUploadedFiles(req.files);
-      return Helper.response(
-        false,
-        "Tenant ID and Employee ID are required",
-        null,
-        res,
-        400
-      );
+      return Helper.response(false,"Tenant ID and Employee ID are required", null,res, 400,);
     }
 
-
-    const typeD = await documentType.findOne({ where: { id: type, tenantId ,branchId} });
+    const typeD = await documentType.findOne({
+      where: { id: type, tenantId, branchId },
+    });
 
     const employeeExists = await empPersonal.findOne({
       where: { id: employeeId, tenantId, branchId },
@@ -342,6 +351,20 @@ const branchId = req.users && req.users.branchId;
 
     if (!req.files || Object.keys(req.files).length === 0) {
       return Helper.response(false, "No files uploaded", null, res, 400);
+    }
+
+    const existingDoc = await Document.findOne({
+      where: { employeeId, tenantId, branchId, type },
+    });
+    if (existingDoc) {
+      Helper.deleteUploadedFiles(req.files);
+      return Helper.response(
+        false,
+        "Document of this type already exists for the employee",
+        null,
+        res,
+        409,
+      );
     }
 
     const createdDocs = [];
@@ -366,7 +389,7 @@ const branchId = req.users && req.users.branchId;
       "Documents added successfully",
       createdDocs,
       res,
-      200
+      200,
     );
   } catch (error) {
     console.error("Error adding document:", error);
@@ -381,9 +404,9 @@ exports.getAppDocument = async (req, res) => {
   const tenantId = req.users?.tenantId;
   const branchId = req.users && req.users.branchId;
 
-    if (!branchId || branchId=='null') {
-      return Helper.response(false, "branchId is required!", {}, res, 200);
-    }
+  if (!branchId || branchId == "null") {
+    return Helper.response(false, "branchId is required!", {}, res, 200);
+  }
   try {
     if (!tenantId || !employeeId) {
       return Helper.response(
@@ -391,7 +414,7 @@ exports.getAppDocument = async (req, res) => {
         "Tenant ID and Employee ID are required",
         null,
         res,
-        400
+        400,
       );
     }
 
@@ -419,14 +442,14 @@ exports.getAppDocument = async (req, res) => {
           createdAt: Helper.formatToIST(doc.createdAt),
           updatedAt: Helper.formatToIST(doc.updatedAt),
         };
-      })
+      }),
     );
     return Helper.response(
       true,
       "Documents retrieved successfully",
       data,
       res,
-      200
+      200,
     );
   } catch (error) {
     console.error("Error retrieving documents:", error);
@@ -435,13 +458,13 @@ exports.getAppDocument = async (req, res) => {
 };
 
 exports.updateAppDocument = async (req, res) => {
-  const {  status, type, doc_name,typeName } = req.body;
+  const { status, type, doc_name, typeName } = req.body;
   const tenantId = req.users?.tenantId;
   const employeeId = req.users && req.users.id;
   try {
     const branchId = req.users && req.users.branchId;
 
-    if (!branchId || branchId=='null') {
+    if (!branchId || branchId == "null") {
       return Helper.response(false, "branchId is required!", {}, res, 200);
     }
     if (!tenantId || !employeeId) {
@@ -451,20 +474,12 @@ exports.updateAppDocument = async (req, res) => {
         "Tenant ID and Employee ID are required",
         null,
         res,
-        400
+        400,
       );
     }
-    if(!type  || type=='null'){
-       
-      return Helper.response(
-        false,
-        "All Fields Are required",
-        null,
-        res,
-        400
-      );
+    if (!type || type == "null") {
+      return Helper.response(false, "All Fields Are required", null, res, 400);
     }
-
 
     const employeeExists = await empPersonal.findOne({
       where: { id: employeeId, tenantId, branchId },
@@ -474,19 +489,18 @@ exports.updateAppDocument = async (req, res) => {
       return Helper.response(false, "Employee not found", null, res, 404);
     }
 
-   
     if (!req.files || Object.keys(req.files).length === 0) {
       const existingDocs = await Document.findAll({
-        where: { tenantId, employeeId, branchId },
+        where: { tenantId, employeeId, branchId, type },
       });
 
       if (existingDocs.length === 0) {
         return Helper.response(
           false,
-          "No documents found to update",
+          "No document of this type found to update",
           null,
           res,
-          404
+          404,
         );
       }
 
@@ -503,10 +517,9 @@ exports.updateAppDocument = async (req, res) => {
         "Document status updated successfully",
         updatedDocuments,
         res,
-        200
+        200,
       );
     }
-
 
     const updatedDocuments = [];
 
@@ -515,37 +528,34 @@ exports.updateAppDocument = async (req, res) => {
         where: { tenantId, employeeId, type, branchId },
       });
 
-      if (existingDoc) {
-        // Delete old file if exists
-        const oldFilePath = path.join(__dirname, "../../../upload", existingDoc.doc_name);
-        if (fs.existsSync(oldFilePath)) {
-          fs.unlinkSync(oldFilePath);
-        }
-
-        // Update existing document
-        existingDoc.doc_name = file.filename;
-        existingDoc.doc_type = file.mimetype;
-        existingDoc.branchId = branchId;
-        existingDoc.updatedBy = req.users?.id;
-        existingDoc.type = type || existingDoc.type;
-        existingDoc.status = status || existingDoc.status;
-        await existingDoc.save();
-        updatedDocuments.push(existingDoc);
-      } else {
-        // Create new document
-        const newDoc = await Document.create({
-          tenantId,
-          employeeId,
-          branchId,
-          type,
-          doc_type: file.mimetype,
-          doc_name: file.filename,
-          createdBy: req.users?.id,
-          updatedBy: req.users?.id,
-          status: status || "active",
-        });
-        updatedDocuments.push(newDoc);
+      if (!existingDoc) {
+        Helper.deleteUploadedFiles([file]);
+        return Helper.response(
+          false,
+          "Document of this type not found. Use the create endpoint to add a new document.",
+          null,
+          res,
+          404,
+        );
       }
+
+      const oldFilePath = path.join(
+        __dirname,
+        "../../../upload",
+        existingDoc.doc_name,
+      );
+      if (fs.existsSync(oldFilePath)) {
+        fs.unlinkSync(oldFilePath);
+      }
+
+      existingDoc.doc_name = file.filename;
+      existingDoc.doc_type = file.mimetype;
+      existingDoc.branchId = branchId;
+      existingDoc.updatedBy = req.users?.id;
+      existingDoc.type = type || existingDoc.type;
+      existingDoc.status = status || existingDoc.status;
+      await existingDoc.save();
+      updatedDocuments.push(existingDoc);
     }
 
     return Helper.response(
@@ -553,12 +563,18 @@ exports.updateAppDocument = async (req, res) => {
       "Documents updated successfully",
       updatedDocuments,
       res,
-      200
+      200,
     );
   } catch (error) {
     console.error("Error updating documents:", error);
     Helper.deleteUploadedFiles(req.files);
-    return Helper.response(false, error?.message || "Internal server error", null, res, 500);
+    return Helper.response(
+      false,
+      error?.message || "Internal server error",
+      null,
+      res,
+      500,
+    );
   }
 };
 exports.deleteAppDocument = async (req, res) => {
@@ -567,9 +583,9 @@ exports.deleteAppDocument = async (req, res) => {
   const branchId = req.users && req.users.branchId;
   const employeeId = req.users && req.users.id;
 
-    if (!branchId || branchId=='null') {
-      return Helper.response(false, "branchId is required!", {}, res, 200);
-    }
+  if (!branchId || branchId == "null") {
+    return Helper.response(false, "branchId is required!", {}, res, 200);
+  }
   try {
     if (!tenantId || !employeeId || !id) {
       return Helper.response(
@@ -577,7 +593,7 @@ exports.deleteAppDocument = async (req, res) => {
         "Tenant ID, Employee ID are required",
         null,
         res,
-        400
+        400,
       );
     }
 
@@ -605,7 +621,7 @@ exports.deleteAppDocument = async (req, res) => {
       "Document deleted successfully",
       null,
       res,
-      200
+      200,
     );
   } catch (error) {
     console.error("Error deleting document:", error);

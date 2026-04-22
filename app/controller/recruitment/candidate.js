@@ -1,5 +1,8 @@
 const path = require("path");
+const fs = require("fs");
 const { Op } = require("sequelize");
+const axios = require("axios");
+const FormData = require("form-data");
 const sequelize = require("../../connection/connection");
 const Helper = require("../../helper/helper");
 const Candidate = require("../../models/candidate");
@@ -10,6 +13,8 @@ const EmploymentType = require("../../models/employmentType");
 const interview_round = require("../../models/interview_round");
 const CandidateAtsScore = require("../../models/candidate_ats_score");
 const CandidateInterviewRound = require("../../models/candidate_interview_round");
+
+const ATS_EVALUATE_URL = "https://gens.demoquaeretech.in/resume_tracker/api/v1/ats/evaluate-from-resume";
 
 const normalizeEmail = (value = "") => String(value).trim().toLowerCase();
 
@@ -41,9 +46,15 @@ const getResumeUrl = (req, file) => {
   if (!file?.filename) {
     return null;
   }
+  const imgBaseUrl = (process.env.IMG_BASE_URL || '').replace(/\/+$/, '');
+  return imgBaseUrl ? `${imgBaseUrl}/${file.filename}` : file.filename;
+};
 
-  const publicBaseUrl = process.env.API_PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
-  return `${publicBaseUrl}/upload/${file.filename}`;
+const buildResumeUrl = (resumeUrl) => {
+  if (!resumeUrl) return null;
+  if (resumeUrl.startsWith('http://') || resumeUrl.startsWith('https://')) return resumeUrl;
+  const imgBaseUrl = (process.env.IMG_BASE_URL || '').replace(/\/+$/, '');
+  return imgBaseUrl ? `${imgBaseUrl}/${resumeUrl}` : resumeUrl;
 };
 
 const resolveJobPosting = async (payload = {}) => {
@@ -196,8 +207,9 @@ const serializeApplication = async (application) => {
     highest_qualification: item.candidate?.highest_qualification || null,
     remark: item.candidate?.remark || null,
     skills: item.candidate?.skills || [],
-    resume_url: item.candidate?.resume_url || null,
+    resume_url: buildResumeUrl(item.candidate?.resume_url),
     resume_name: item.candidate?.resume_url ? item.candidate.resume_url.split("/").pop() : null,
+    img_base_url: (process.env.IMG_BASE_URL || '').replace(/\/+$/, ''),
     createdAt: item.createdAt,
     ats: {
       ats_score: atsScore,
@@ -265,6 +277,70 @@ const sendCandidateConfirmation = async (candidate, jobPosting, application) => 
 
   await application.update({ confirmation_email_sent: true });
   return true;
+};
+
+const runExternalAtsScan = async (application, jobPosting, candidate, resumeFile, reqUser = {}) => {
+  try {
+    const form = new FormData();
+
+    const filePath = path.resolve(resumeFile.path);
+    if (fs.existsSync(filePath)) {
+      form.append("resume", fs.createReadStream(filePath), {
+        filename: resumeFile.originalname,
+        contentType: resumeFile.mimetype,
+      });
+    }
+
+    form.append("application_id", String(application.id));
+    form.append("job_title", String(jobPosting.job_title || ""));
+    form.append("job_description", String(jobPosting.job_description || ""));
+    form.append("required_skills", JSON.stringify(normalizeSkills(jobPosting.skills)));
+    form.append("required_experience", String(jobPosting.experience || ""));
+    form.append("candidate_name", String(candidate.name || ""));
+    form.append("candidate_email", String(candidate.email || ""));
+
+    const response = await axios.post(ATS_EVALUATE_URL, form, {
+      headers: form.getHeaders(),
+      timeout: 30000,
+    });
+
+    const data = response.data?.data || response.data?.data|| {};
+    const atsScore = Number(data.overall_score ?? data.overall_score ?? 0);
+    const manualScore = Number(application.manual_score || 0);
+    const finalScore = Number(data.overall_score ?? Math.round((atsScore + manualScore) / 2));
+
+    const tenantId = jobPosting?.tenantId || reqUser?.tenantId;
+    const branchId = normalizeBranchId(jobPosting?.branchId || reqUser?.branchId);
+
+    await application.update({
+      ats_status: "completed",
+      ats_score: atsScore,
+      final_score: finalScore,
+      stage: "ats_screening",
+      status: "screening",
+    });
+
+    await CandidateAtsScore.upsert({
+      application_id: application.id,
+      tenantId,
+      branchId,
+      ats_score: atsScore,
+      manual_score: manualScore,
+      final_score: finalScore,
+      shortlisted: false,
+      scanned_at: new Date(),
+      scanned_by: reqUser?.id || null,
+      notes: data.notes || "Auto ATS scan completed",
+      createdBy: reqUser?.id || null,
+      updatedBy: reqUser?.id || null,
+    });
+
+    return { ats_status: "completed", ats_score: atsScore, final_score: finalScore };
+  } catch (err) {
+    console.error("External ATS scan failed:", err.message);
+    await application.update({ ats_status: "failed" }).catch(() => {});
+    return { ats_status: "failed", ats_score: 0, final_score: 0 };
+  }
 };
 
 exports.publicJobPosting = async (req, res) => {
@@ -520,8 +596,8 @@ exports.submitCandidateApplication = async (req, res) => {
 
     await transaction.commit();
 
-    // await runAtsScan(application, jobPosting, candidate, req.file, req.users || {});
     await sendCandidateConfirmation(candidate, jobPosting, application);
+    const atsResult = await runExternalAtsScan(application, jobPosting, candidate, req.file, req.users || {});
 
     return Helper.response(
       true,
@@ -529,7 +605,9 @@ exports.submitCandidateApplication = async (req, res) => {
       {
         candidate,
         application,
-        ats_status: "completed",
+        ats_status: atsResult.ats_status,
+        ats_score: atsResult.ats_score,
+        final_score: atsResult.final_score,
         confirmation_email_sent: true,
       },
       res,

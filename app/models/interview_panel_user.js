@@ -39,14 +39,22 @@ const InterviewPanelUser = sequelize.define('interview_panel_user', {
     type: DataTypes.UUID,
     allowNull: true
   },
+  gender: {
+    type: DataTypes.ENUM('male', 'female', 'other'),
+    allowNull: true
+  },
   status: {
     type: DataTypes.ENUM('active', 'inactive'),
     defaultValue: 'active'
   },
-    token: {
-        type: DataTypes.TEXT,
-        allowNull: true
-    },
+    password: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  token: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
   createdBy: {
     type: DataTypes.UUID,
     allowNull: true

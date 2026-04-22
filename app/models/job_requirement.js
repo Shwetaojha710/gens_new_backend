@@ -78,6 +78,19 @@ const job_requirement = sequelize.define("job_requirement", {
   notice_period: DataTypes.STRING,
   job_description: DataTypes.TEXT,
   url: DataTypes.TEXT,
+  token: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  expires_days: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: 0,
+  },
+  expires_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
   status: {
     type: DataTypes.STRING,
     defaultValue: "draft",

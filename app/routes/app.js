@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {AppAdmin, Admin} = require('../middleware/auth');
-const {getDailyAttendance,getAttendance, employeeByDepartment, TeamsAttendance,EmployeeDetails, EmployeeLeaveList,getAppAppliedLeaves, AppupdatedApplyLeaveStatus,AppapplyForLeave, getAppLeaveTypes, AppgetHolidayList, upcomingLeave, AppgetBillDetails, PrintBill, TeamLeaderLeaveList, DirectorLeaveList, notification, applyRegularization, getMyRegularizations, getPendingApproverRequests, updateRegularizationStatus, markattendance, addAppReimbursement, reimbursementList, updateAppEmp}=require("../controller/tenant/appApi");
+const {getDailyAttendance,getAttendance, employeeByDepartment, TeamsAttendance,EmployeeDetails, EmployeeLeaveList,getAppAppliedLeaves, AppupdatedApplyLeaveStatus,AppapplyForLeave, getAppLeaveTypes, AppgetHolidayList, upcomingLeave, AppgetBillDetails, PrintBill, TeamLeaderLeaveList, DirectorLeaveList, notification, applyRegularization, getMyRegularizations, getPendingApproverRequests, updateRegularizationStatus, markattendance, addAppReimbursement, reimbursementList, updateAppEmp, getEmpLetterDocs, saveEmpLetterSignature}=require("../controller/tenant/appApi");
 const { trackLocation, getLatestLocation, PinnedtrackLocation, listVistData, updateTrackRemark } = require('../controller/tenant/tracking');
 const upload = require('../middleware/upload');
 const excel_pdf_upload = require('../middleware/excel_pdf_upload');
@@ -51,6 +51,7 @@ router.post('/mark-attendance',AppAdmin,upload.any(),markattendance );
 router.post('/add-app-reimbursement',AppAdmin, excel_pdf_upload.array('images'),addAppReimbursement)
 router.get('/reimbursement-list',AppAdmin,reimbursementList)
 router.post('/update-app-emp',AppAdmin,updateAppEmp)
-
+router.get('/get-emp-letter-docs', AppAdmin, getEmpLetterDocs)
+router.post('/save-emp-letter-signature', AppAdmin, saveEmpLetterSignature)
 
 module.exports = router

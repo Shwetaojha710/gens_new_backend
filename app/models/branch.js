@@ -15,6 +15,10 @@ const branch = sequelize.define('branch', {
         type: DataTypes.STRING,
         allowNull: false
     },
+    description: {
+        type: DataTypes.TEXT,
+        allowNull: true
+    },
      latitude: {
       type: DataTypes.DECIMAL(18, 8),
       allowNull: true,

@@ -1,4 +1,7 @@
 const Helper = require("../../helper/helper");
+const nodemailer = require("nodemailer");
+const CryptoJS = require("crypto-js");
+const hashPassword = (pwd) => CryptoJS.SHA256(pwd).toString();
 const interview_round = require("../../models/interview_round");
 const round_type = require("../../models/round_type");
 const Application = require("../../models/application");
@@ -52,7 +55,7 @@ const buildRoundPlanFromJob = async (jobPosting) => {
     round_id: round.id,
     round_name: round.round_name,
     round_type: round.roundTypeData?.name || null,
-    sequence: round.order_sequence || index + 1,
+    sequence: index + 1,
     interviewer_id: null,
     interviewer_name: null,
     interviewer_email: null,
@@ -364,10 +367,19 @@ exports.saveInterviewFeedback = async (req, res) => {
       });
     }
 
-    await application.update({
-      stage: "interview_in_progress",
-      status: recommendation === "rejected" ? "rejected" : "interview_in_progress",
-    });
+    // If candidate is rejected in this round → mark rejected and stop
+    if (recommendation == "rejected") {
+      await application.update({ stage: "rejected", status: "rejected" });
+      return Helper.response(true, "Feedback saved", feedback, res, 200);
+    }
+
+    // Check if ALL assigned rounds now have feedback submitted
+    const allRounds = await CandidateInterviewRound.findAll({ where: { application_id } });
+    const assignedRounds = allRounds.filter(r => r.interviewer_id); // only rounds with an interviewer
+    const allDone = assignedRounds.length > 0 && assignedRounds.every(r => r.feedback_submitted);
+
+    const newStage = allDone ? "offered" : "interview_in_progress";
+    await application.update({ stage: newStage, status: newStage });
 
     return Helper.response(true, "Feedback saved", feedback, res, 200);
   } catch (error) {
@@ -380,7 +392,7 @@ exports.saveInterviewFeedback = async (req, res) => {
 
 exports.createInterviewPanelUser = async (req, res) => {
   try {
-    const { first_name, last_name, email, mobile_no, department, designation } = req.body;
+    const { first_name, last_name, email, mobile_no, department, designation, gender, password } = req.body;
 
     const tenantId = req.users?.tenantId;
     const branchId = normalizeNullableValue(req.users?.branchId);
@@ -409,6 +421,8 @@ exports.createInterviewPanelUser = async (req, res) => {
       mobile_no,
       department,
       designation,
+      gender: gender || null,
+      password: password ? hashPassword(password) : null,
       status: "active",
       createdBy: userId,
     });
@@ -531,7 +545,10 @@ exports.assignInterviewer = async (req, res) => {
       return Helper.response(false, "application_id and panel_user_id are required", {}, res, 400);
     }
 
-    const application = await Application.findOne({ where: { id: application_id } });
+    const application = await Application.findOne({
+      where: { id: application_id },
+      include: [{ model: JobRequirement, as: "jobPosting" }],
+    });
     if (!application) {
       return Helper.response(false, "Application not found", {}, res, 404);
     }
@@ -554,7 +571,22 @@ exports.assignInterviewer = async (req, res) => {
       if (round) {
         roundName = round.round_name;
         roundType = round.round_type || null;
-        sequence = round.order_sequence || 1;
+
+        // Compute relative position within this job's configured rounds
+        const jobRoundIds = Array.isArray(application.jobPosting?.interview_round)
+          ? application.jobPosting.interview_round
+          : [];
+        if (jobRoundIds.length) {
+          const jobRounds = await interview_round.findAll({
+            where: { id: jobRoundIds },
+            order: [["order_sequence", "ASC"]],
+            attributes: ["id"],
+          });
+          const relativeIndex = jobRounds.findIndex((r) => r.id === round_id);
+          sequence = relativeIndex >= 0 ? relativeIndex + 1 : 1;
+        } else {
+          sequence = 1;
+        }
       }
     }
 
@@ -595,6 +627,168 @@ exports.assignInterviewer = async (req, res) => {
     return Helper.response(true, "Interviewer assigned successfully", {}, res, 200);
   } catch (error) {
     console.error("assignInterviewer error:", error);
+    return Helper.response(false, error.message, {}, res, 500);
+  }
+};
+
+// ─── Send Interview Mail ──────────────────────────────────────────────────────
+
+const createTransporter = () =>
+  nodemailer.createTransport({
+    host: process.env.MAIL_HOST || "smtp.gmail.com",
+    port: parseInt(process.env.MAIL_PORT || "587"),
+    secure: false,
+    auth: {
+      user: process.env.MAIL_USER,
+      pass: process.env.MAIL_PASS,
+    },
+  });
+
+const formatDateTime = (isoStr) => {
+  if (!isoStr) return "To be confirmed";
+  const d = new Date(isoStr);
+  return d.toLocaleString("en-IN", {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: true,
+  });
+};
+
+exports.sendInterviewMail = async (req, res) => {
+  try {
+    const {
+      application_id,
+      candidate_name,
+      candidate_email,
+      interviewer_name,
+      interviewer_email,
+      round_name,
+      job_title,
+      scheduled_at,
+      duration_minutes,
+      mode,
+      meeting_link,
+    } = req.body || {};
+
+    if (!candidate_email || !interviewer_email) {
+      return Helper.response(false, "candidate_email and interviewer_email are required", {}, res, 400);
+    }
+
+    const transporter = createTransporter();
+    const scheduledStr = formatDateTime(scheduled_at);
+    const durationStr = duration_minutes ? `${duration_minutes} minutes` : "Not specified";
+    const modeStr = mode ? mode.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Not specified";
+    const meetingStr = meeting_link
+      ? `<a href="${meeting_link}" style="color:#2563eb;">${meeting_link}</a>`
+      : "Will be shared separately";
+
+    // ── Candidate mail ────────────────────────────────────────────────────────
+    const candidateMail = {
+      from: process.env.MAIL_FROM || `"GENS HR" <${process.env.MAIL_USER}>`,
+      to: candidate_email,
+      subject: `Interview Scheduled – ${job_title} | ${round_name}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+          <div style="background:#2563eb;padding:24px 32px;">
+            <h2 style="color:#fff;margin:0;">Interview Invitation</h2>
+          </div>
+          <div style="padding:28px 32px;color:#1f2937;">
+            <p style="margin-top:0;">Dear <strong>${candidate_name}</strong>,</p>
+            <p>We are pleased to inform you that your interview has been scheduled for the position of <strong>${job_title}</strong>.</p>
+            <table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:14px;">
+              <tr style="background:#f3f4f6;">
+                <td style="padding:10px 14px;font-weight:600;width:40%;">Round</td>
+                <td style="padding:10px 14px;">${round_name}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;">Date &amp; Time</td>
+                <td style="padding:10px 14px;">${scheduledStr}</td>
+              </tr>
+              <tr style="background:#f3f4f6;">
+                <td style="padding:10px 14px;font-weight:600;">Duration</td>
+                <td style="padding:10px 14px;">${durationStr}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;">Mode</td>
+                <td style="padding:10px 14px;">${modeStr}</td>
+              </tr>
+              <tr style="background:#f3f4f6;">
+                <td style="padding:10px 14px;font-weight:600;">Interviewer</td>
+                <td style="padding:10px 14px;">${interviewer_name}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;">Meeting Link</td>
+                <td style="padding:10px 14px;">${meetingStr}</td>
+              </tr>
+            </table>
+            <p>Please ensure you are available 5 minutes before the scheduled time. Feel free to reach out if you have any questions.</p>
+            <p style="margin-bottom:0;">Best regards,<br/><strong>HR Team – GENS</strong></p>
+          </div>
+          <div style="background:#f9fafb;padding:14px 32px;font-size:12px;color:#9ca3af;border-top:1px solid #e5e7eb;">
+            This is an automated message. Please do not reply to this email.
+          </div>
+        </div>`,
+    };
+
+    // ── Interviewer mail ──────────────────────────────────────────────────────
+    const interviewerMail = {
+      from: process.env.MAIL_FROM || `"GENS HR" <${process.env.MAIL_USER}>`,
+      to: interviewer_email,
+      subject: `Interview Assigned – ${candidate_name} | ${round_name}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+          <div style="background:#059669;padding:24px 32px;">
+            <h2 style="color:#fff;margin:0;">Interview Assignment</h2>
+          </div>
+          <div style="padding:28px 32px;color:#1f2937;">
+            <p style="margin-top:0;">Dear <strong>${interviewer_name}</strong>,</p>
+            <p>You have been assigned to conduct an interview. Below are the details:</p>
+            <table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:14px;">
+              <tr style="background:#f3f4f6;">
+                <td style="padding:10px 14px;font-weight:600;width:40%;">Candidate</td>
+                <td style="padding:10px 14px;">${candidate_name}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;">Position</td>
+                <td style="padding:10px 14px;">${job_title}</td>
+              </tr>
+              <tr style="background:#f3f4f6;">
+                <td style="padding:10px 14px;font-weight:600;">Round</td>
+                <td style="padding:10px 14px;">${round_name}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;">Date &amp; Time</td>
+                <td style="padding:10px 14px;">${scheduledStr}</td>
+              </tr>
+              <tr style="background:#f3f4f6;">
+                <td style="padding:10px 14px;font-weight:600;">Duration</td>
+                <td style="padding:10px 14px;">${durationStr}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 14px;font-weight:600;">Mode</td>
+                <td style="padding:10px 14px;">${modeStr}</td>
+              </tr>
+              <tr style="background:#f3f4f6;">
+                <td style="padding:10px 14px;font-weight:600;">Meeting Link</td>
+                <td style="padding:10px 14px;">${meetingStr}</td>
+              </tr>
+            </table>
+            <p>Please log in to the portal to review the candidate profile and submit feedback after the interview.</p>
+            <p style="margin-bottom:0;">Best regards,<br/><strong>HR Team – GENS</strong></p>
+          </div>
+          <div style="background:#f9fafb;padding:14px 32px;font-size:12px;color:#9ca3af;border-top:1px solid #e5e7eb;">
+            This is an automated message. Please do not reply to this email.
+          </div>
+        </div>`,
+    };
+
+    await Promise.all([
+      transporter.sendMail(candidateMail),
+      transporter.sendMail(interviewerMail),
+    ]);
+
+    return Helper.response(true, "Interview mails sent successfully", {}, res, 200);
+  } catch (error) {
+    console.error("sendInterviewMail error:", error);
     return Helper.response(false, error.message, {}, res, 500);
   }
 };

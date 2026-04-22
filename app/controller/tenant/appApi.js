@@ -3,6 +3,8 @@ const attendance = require("../../models/attendance");
 const Department = require("../../models/department");
 const Designation = require("../../models/designation");
 const empPersonal = require("../../models/empPersonal");
+const LetterData = require("../../models/letter_data");
+const Tenant = require("../../models/tenant");
 const BankAccount = require("../../models/bankAccnt");
 const State = require("../../models/state");
 const Country = require("../../models/country");
@@ -2644,7 +2646,10 @@ exports.AppapplyForLeave = async (req, res) => {
         days,
         branchId,
         tenantId,
-        
+        status:{
+        [Op.ne]: 'self_declined'
+        }
+
       },
     });
     if (existsLeave) {
@@ -5082,6 +5087,73 @@ if(!id){
     );
   } catch (error) {
     console.error("Error updating employee:", error);
+    return Helper.response(false, error?.message, [], res, 500);
+  }
+};
+
+exports.getEmpLetterDocs = async (req, res) => {
+  try {
+    const employeeId = req.users.id;
+    const tenantId = req.users.tenantId;
+
+    const emp = await empPersonal.findOne({ where: { id: employeeId, tenantId }, raw: true });
+    if (!emp) return Helper.response(false, 'Employee not found.', [], res, 404);
+
+    if (emp.status !== 'active') {
+      return Helper.response(true, 'Inactive', { active: false }, res, 200);
+    }
+
+    const [designation, department, tenant, records] = await Promise.all([
+      emp.designationId ? Designation.findOne({ where: { id: emp.designationId, tenantId }, raw: true }) : null,
+      emp.departmentId ? Department.findOne({ where: { id: emp.departmentId, tenantId }, raw: true }) : null,
+      Tenant.findOne({ where: { id: tenantId }, attributes: ['companyName', 'companyAddress'], raw: true }),
+      LetterData.findAll({ where: { employeeId, tenantId, type: ['offer', 'appointment', 'relieving'] } })
+    ]);
+
+    const letters = { offer: null, appointment: null, relieving: null };
+    records.forEach(r => {
+      letters[r.type] = { generated: true, data: r.data, updatedAt: r.updatedAt };
+    });
+
+    const empData = {
+      firstName: emp.firstName,
+      lastName: emp.lastName,
+      empCode: emp.empCode,
+      gender: emp.gender,
+      fatherName: emp.fatherName,
+      permanentAddress: emp.permanentAddress,
+      joiningDate: emp.joiningDate,
+      designation: designation?.name || '',
+      department: department?.name || ''
+    };
+
+    const tenantData = {
+      companyName: tenant?.companyName || '',
+      companyAddress: tenant?.companyAddress || ''
+    };
+
+    return Helper.response(true, 'Success', { active: true, letters, emp: empData, tenant: tenantData }, res, 200);
+  } catch (error) {
+    console.error('getEmpLetterDocs error:', error);
+    return Helper.response(false, error?.message, [], res, 500);
+  }
+};
+
+exports.saveEmpLetterSignature = async (req, res) => {
+  try {
+    const employeeId = req.users.id;
+    const tenantId = req.users.tenantId;
+    const { signature } = req.body;
+    if (!signature) return Helper.response(false, 'Signature is required.', [], res, 400);
+
+    const record = await LetterData.findOne({ where: { employeeId, tenantId, type: 'appointment' } });
+    if (!record) return Helper.response(false, 'Appointment letter not found. Please contact HR.', [], res, 404);
+
+    const existing = record.data || {};
+    await record.update({ data: { ...existing, signature } });
+    return Helper.response(true, 'Signature saved successfully.', {}, res, 200);
+  } catch (error) {
+    console.error('saveEmpLetterSignature error:', error);
     return Helper.response(false, error?.message, [], res, 500);
   }
 };

@@ -2,7 +2,7 @@ const Helper = require("../../helper/helper");
 const branch = require("../../models/branch");
 
 exports.createBranch = async (req, res) => {
-  const { name, status, longitude, latitude } = req.body;
+  const { name, status, longitude, latitude,description } = req.body;
   const tenantId = req.users && req.users.tenantId;
   try {
     if (!tenantId || !name) {
@@ -23,14 +23,20 @@ exports.createBranch = async (req, res) => {
         400,
       );
     }
-    const imageFile = req.files && req.files.find((f) => f.fieldname === "image");
-    const image = imageFile ? imageFile.path : null;
+    const existing = await branch.findOne({ where: { name, tenantId } });
+    if (existing) {
+      return Helper.response(false, "Branch with this name already exists", [], res, 409);
+    }
+
+    const imageFile = req.files && req.files.find((f) => f.fieldname == "image");
+    const image = imageFile ? imageFile.filename : null;
     const newbranch = await branch.create({
       tenantId,
       name,
       latitude,
       longitude,
       image,
+      description:description || null,
       status: status || "active",
       createdBy: req.users && req.users.id,
       updatedBy: req.users && req.users.id,
@@ -117,6 +123,11 @@ exports.updateBranch = async (req, res) => {
     }
     if (!name) {
       return Helper.response(false, "Name Is Required", [], res, 404);
+    }
+
+    const duplicate = await branch.findOne({ where: { name, tenantId } });
+    if (duplicate && duplicate.id !== id) {
+      return Helper.response(false, "Branch with this name already exists", [], res, 409);
     }
 
     const imageFile = req.files && req.files.find((f) => f.fieldname == "image");

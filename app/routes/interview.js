@@ -17,6 +17,7 @@ const {
   listInterviewPanelUsers,
   deleteInterviewPanelUser,
   assignInterviewer,
+  sendInterviewMail,
 } = require('../controller/recruitment/interview');
 const { createRoundType, updateRoundType, deleteRoundType, getRoundType, getRoundTypeDD } = require('../controller/recruitment/round_type');
 const { panelUserLogin, panelUserLogout } = require('../controller/recruitment/panel_user_auth');
@@ -47,6 +48,7 @@ router.post('/updateInterviewPanelUser', Admin, updateInterviewPanelUser);
 router.post('/listInterviewPanelUsers', Admin, listInterviewPanelUsers);
 router.post('/deleteInterviewPanelUser', Admin, deleteInterviewPanelUser);
 router.post('/assign-interviewer', Admin, assignInterviewer);
+router.post('/send-interview-mail', Admin, sendInterviewMail);
 
 // Panel user (interviewer) routes
 router.post('/panel-user-login', panelUserLogin);

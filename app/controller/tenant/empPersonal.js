@@ -18,8 +18,36 @@ const bankAccnt = require("../../models/bankAccnt");
 const leave_balance = require("../../models/leaveBalance");
 const Designation = require("../../models/designation");
 const Tenant = require("../../models/tenant");
+const Subscription = require("../../models/subscription");
 const pin_code_master = require("../../models/pin_code_master");
 const Department = require("../../models/department");
+
+
+exports.CheckTenant = async (req, res) => {
+  
+  const { companyCode } = req.body;
+  try {
+    if (!companyCode) {
+      return Helper.response(false, "Company code is required", [], res, 400);
+    }
+    const tenant = await Tenant.findOne({
+      where: { companyCode,status: "active" },
+    });
+    if (!tenant) {
+      return Helper.response(false, "No Company Found", {}, res, 404);
+    }
+    return Helper.response(
+      true,
+      "Company found",
+      { tenantId: tenant.id, companyName: tenant.companyName },
+      res,
+      200,
+    );
+  } catch (error) {
+    console.error("Error checking tenant:", error);
+    return Helper.response(false, error?.message, [], res, 500);
+  }
+};
 
 exports.RegisterAppEmp = async (req, res) => {
   let {
@@ -229,6 +257,32 @@ exports.createEmp = async (req, res) => {
   // }
 
   try {
+    // ── Subscription seat validation ──────────────────────────────────────
+    const activeSub = await Subscription.findOne({
+      where: {
+        tenantId,
+        status: "active",
+        endsAt: { [Op.gte]: new Date() },
+      },
+      order: [["endsAt", "DESC"]],
+    });
+
+    if (activeSub && activeSub.seats != null) {
+      const currentEmpCount = await empPersonal.count({
+        where: { tenantId, status: "active" },
+      });
+      if (currentEmpCount >= activeSub.seats) {
+        return Helper.response(
+          false,
+          `Employee limit reached. Your current subscription allows only ${activeSub.seats} employee(s). Please upgrade your plan to add more.`,
+          {},
+          res,
+          200
+        );
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     const maxuser = await empPersonal.count({ tenantId, branchId });
     // const getprefix = await Prefix.findOne({
     //   where: {

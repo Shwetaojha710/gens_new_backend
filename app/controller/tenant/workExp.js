@@ -201,6 +201,19 @@ exports.createAppWorkExp = async (req, res) => {
       return Helper.response(false, "Employee not found", null, res, 404);
     }
 
+    const duplicateWorkExp = await workExp.findOne({
+      where: { employeeId, tenantId, branchId, companyName, designation, from },
+    });
+    if (duplicateWorkExp) {
+      return Helper.response(
+        false,
+        "Work experience with the same company, designation, and start date already exists",
+        null,
+        res,
+        409,
+      );
+    }
+
     // const formattedFrom = await Helper.dateFormat(from);
     // const formattedTo = to ? await Helper.dateFormat(to) : null;
 

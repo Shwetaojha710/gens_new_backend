@@ -4,6 +4,7 @@ const sequelize = require("../../connection/connection.js");
 const Department = require("../../models/department.js");
 const Skills = require("../../models/skills.js");
 const EmploymentType = require("../../models/employmentType.js");
+const OfferLetter = require("../../models/offer_letter.js");
 
 const { v4: uuidv4 } = require("uuid");
 const job_requirement = require("../../models/job_requirement");
@@ -57,13 +58,14 @@ exports.createJobRequirement = async (req, res) => {
       interview_round_ids,
       interview_rounds,
       candidate_preference,
+      expires_days,
     } = req.body;
 
     const tenantId = req.users?.tenantId;
     const branchId = req.users?.branchId;
     const userId = req.users?.id;
 
-    if (!job_title || !department || !job_description) {
+    if (!job_title || !department || !job_description || !qualification || !experience || !emp_type) {
       return Helper.response(false, "Required fields missing", {}, res, 400);
     }
 
@@ -129,12 +131,21 @@ exports.createJobRequirement = async (req, res) => {
 
     const jobCode = `JOB${String(job.id).padStart(4, "0")}`;
 
-    const url = `${base_url}/${slug}?job_id=${job.id}&token=${token}`;
+    const url = `${slug}?job_id=${job.id}&token=${token}`;
+
+    const expiresDaysNum = expires_days !== undefined && expires_days !== null
+      ? Number(expires_days)
+      : 0;
+    const expiresAt = expiresDaysNum > 0
+      ? new Date(Date.now() + expiresDaysNum * 86400000)
+      : null;
 
     await job.update({
       job_id: jobCode,
       url,
       token,
+      expires_days: expiresDaysNum,
+      expires_at: expiresAt,
     });
 
     return Helper.response(true, "Created Successfully", job, res, 200);
@@ -264,7 +275,7 @@ exports.getJobRequirements = async (req, res) => {
       jobData.application_count = Array.isArray(jobData.applications)
         ? jobData.applications.length
         : 0;
-
+      jobData.url=`${process.env.CAN_BASE_URL}/${jobData.url}`;
       return jobData;
     });
 
@@ -318,6 +329,7 @@ exports.updateJobRequirement = async (req, res) => {
       interview_rounds,
       candidate_preference,
       qualification,
+      expires_days,
     } = req.body;
 
     const tenantId = req.users?.tenantId;
@@ -391,6 +403,13 @@ exports.updateJobRequirement = async (req, res) => {
       candidate_preference: normalizedCandidatePreference ?? job.candidate_preference,
       interview_round: normalizedInterviewRounds ?? job.interview_round,
       updatedBy: userId,
+      ...(expires_days !== undefined && expires_days !== null ? (() => {
+        const expiresDaysNum = Number(expires_days);
+        const expiresAt = expiresDaysNum > 0
+          ? new Date(Date.now() + expiresDaysNum * 86400000)
+          : null;
+        return { expires_days: expiresDaysNum, expires_at: expiresAt };
+      })() : {}),
     });
 
     return Helper.response(true, "Updated Successfully", job, res, 200);
@@ -420,6 +439,184 @@ exports.publishJob = async (req, res) => {
     );
 
     return Helper.response(true, "Data Updated Successfully", {}, res, 200);
+  } catch (error) {
+    console.error(error);
+    return Helper.response(false, error.message, {}, res, 500);
+  }
+};
+
+exports.saveJobLink = async (req, res) => {
+  try {
+    const { job_id, slug, base_url, token, expires_days } = req.body;
+
+    const tenantId = req.users?.tenantId;
+    const branchId = req.users?.branchId;
+
+    if (!job_id) {
+      return Helper.response(false, "job_id is required", {}, res, 400);
+    }
+    if (!token) {
+      return Helper.response(false, "token is required", {}, res, 400);
+    }
+
+    const job = await JobRequirement.findOne({
+      where: { id: job_id, tenantId, branchId },
+    });
+
+    if (!job) {
+      return Helper.response(false, "Job not found", {}, res, 404);
+    }
+
+    const finalSlug = slug || job.slug;
+    const finalBaseUrl = (base_url || process.env.CAN_BASE_URL || "").replace(/\/+$/, "");
+    const fullUrl = `${finalBaseUrl}/${finalSlug}?job_id=${job_id}&token=${token}`;
+
+    const expiresDaysNum = Number(expires_days) || 0;
+    const expiresAt = expiresDaysNum > 0
+      ? new Date(Date.now() + expiresDaysNum * 86400000)
+      : null;
+
+    await job.update({
+      slug: finalSlug,
+      token,
+      url: fullUrl,
+      expires_days: expiresDaysNum,
+      expires_at: expiresAt,
+    });
+
+    return Helper.response(
+      true,
+      "Link saved successfully",
+      {
+        url: fullUrl,
+        token,
+        expires_at: expiresAt ? expiresAt.toISOString() : null,
+        expires_days: expiresDaysNum,
+      },
+      res,
+      200
+    );
+  } catch (error) {
+    console.error(error);
+    return Helper.response(false, error.message, {}, res, 500);
+  }
+};
+
+exports.getOfferLetters = async (req, res) => {
+  try {
+    const tenantId = req.users?.tenantId;
+    const branchId = req.users?.branchId;
+
+    const letters = await OfferLetter.findAll({
+      where: { tenantId, branchId },
+      order: [['createdAt', 'DESC']],
+    });
+
+    if (!letters.length) {
+      return Helper.response(false, 'No Data Found', [], res, 200);
+    }
+
+    return Helper.response(true, 'Data Found Successfully', letters, res, 200);
+  } catch (error) {
+    console.error(error);
+    return Helper.response(false, error.message, {}, res, 500);
+  }
+};
+
+exports.checkDuplicateOfferLetter = async (req, res) => {
+  try {
+    const { mobileNo, email, aadhaarNo } = req.body;
+    const tenantId = req.users?.tenantId;
+    const branchId = req.users?.branchId;
+
+    const { Op } = require("sequelize");
+    const orConditions = [];
+    if (mobileNo) orConditions.push({ mobileNo, tenantId, branchId });
+    if (email)    orConditions.push({ email,    tenantId, branchId });
+    if (aadhaarNo) orConditions.push({ aadhaarNo, tenantId, branchId });
+
+    if (!orConditions.length) {
+      return Helper.response(false, "No fields to check", {}, res, 400);
+    }
+
+    const existing = await OfferLetter.findOne({ where: { [Op.or]: orConditions } });
+
+    if (existing) {
+      let field = existing.mobileNo === mobileNo ? "Mobile number"
+        : existing.email === email ? "Email"
+        : "Aadhaar number";
+      return Helper.response(false, `${field} already exists. Duplicate offer letter not allowed.`, {}, res, 200);
+    }
+
+    return Helper.response(true, "No duplicate found", {}, res, 200);
+  } catch (error) {
+    console.error(error);
+    return Helper.response(false, error.message, {}, res, 500);
+  }
+};
+
+exports.saveOfferLetter = async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      fatherName,
+      gender,
+      dob,
+      aadhaarNo,
+      mobileNo,
+      email,
+      permanentAddress,
+      designation,
+      department,
+      joiningDate,
+      offerDate,
+      refNo,
+    } = req.body;
+
+    const tenantId = req.users?.tenantId;
+    const branchId = req.users?.branchId;
+    const userId   = req.users?.id;
+
+    if (!firstName || !lastName || !fatherName || !gender || !mobileNo || !email ||
+        !permanentAddress || !designation || !department || !joiningDate || !offerDate) {
+      return Helper.response(false, "Required fields missing", {}, res, 400);
+    }
+
+    // Duplicate check
+    const { Op } = require("sequelize");
+    const orConditions = [{ mobileNo, tenantId, branchId }, { email, tenantId, branchId }];
+    if (aadhaarNo) orConditions.push({ aadhaarNo, tenantId, branchId });
+
+    const existing = await OfferLetter.findOne({ where: { [Op.or]: orConditions } });
+    if (existing) {
+      let field = existing.mobileNo === mobileNo ? "Mobile number"
+        : existing.email === email ? "Email"
+        : "Aadhaar number";
+      return Helper.response(false, `${field} already exists. Duplicate offer letter not allowed.`, {}, res, 409);
+    }
+
+    const letter = await OfferLetter.create({
+      tenantId,
+      branchId,
+      firstName,
+      lastName,
+      fatherName,
+      gender,
+      dob: dob || null,
+      aadhaarNo: aadhaarNo || null,
+      mobileNo,
+      email,
+      permanentAddress,
+      designation,
+      department,
+      joiningDate,
+      offerDate,
+      refNo: refNo || null,
+      createdBy: userId,
+    });
+
+    return Helper.response(true, "Offer letter saved successfully", letter, res, 200);
   } catch (error) {
     console.error(error);
     return Helper.response(false, error.message, {}, res, 500);

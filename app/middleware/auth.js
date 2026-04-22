@@ -158,7 +158,7 @@ const SuperAdmin = async (req, res, next) => {
 };
 const AppAdmin = async (req, res, next) => {
   try {
-    console.log(req.body,"boidyyyymiididi");
+    // console.log(req.body,"boidyyyymiididi");
     
     const authHeader = req.headers["authorization"] || req.headers["Authorization"];
     
